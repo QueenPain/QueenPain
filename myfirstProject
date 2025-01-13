@@ -1,0 +1,530 @@
+#My3DShooter/
+
+#Source/
+
+
+#TextureLoader.cpp/
+#include "TextureLoader.h"
+#include "stb_image.h"
+#include <iostream>
+
+GLuint TextureLoader::loadTexture(const std::string& path) {
+    GLuint textureID;
+    glGenTextures(1, &textureID);
+    glBindTexture(GL_TEXTURE_2D, textureID);
+
+    // Texturparameter einstellen
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    // Bilddaten laden
+    int width, height, nrChannels;
+    unsigned char *data = stbi_load(path.c_str(), &width, &height, &nrChannels, 0);
+    if (data) {
+        GLenum format;
+        if (nrChannels == 1)
+            format = GL_RED;
+        else if (nrChannels == 3)
+            format = GL_RGB;
+        else if (nrChannels == 4)
+            format = GL_RGBA;
+        
+        glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+        glGenerateMipmap(GL_TEXTURE_2D);
+    } else {
+        std::cerr << "Failed to load texture: " << path << std::endl;
+    }
+    stbi_image_free(data);
+    return textureID;
+}
+
+#TextureLoader.h/
+
+#ifndef TEXTURELOADER_H
+#define TEXTURELOADER_H
+
+#include <GL/glew.h>
+#include <string>
+
+class TextureLoader {
+public:
+    static GLuint loadTexture(const std::string& path);
+};
+
+#endif // TEXTURELOADER_H
+
+
+#Game.cpp/
+
+#include "Game.h"
+#include "TextureLoader.h"
+#include <iostream>
+#include <GL/glew.h>
+#include <algorithm>
+
+Game::Game() : player(new Player()), enemy(new Enemy()) {}
+
+Game::~Game() {
+    delete soldierModel;
+    delete player;
+    delete enemy;
+
+    // Speicher für Kugeln freigeben
+    for (Bullet* bullet : bullets) {
+        delete bullet;
+    }
+}
+
+void Game::initialize() {
+    soldierModel = new Model("Assets/Models/soldier.obj");
+    soldierTexture = TextureLoader::loadTexture("Assets/Textures/soldier_texture.png");
+}
+
+void Game::run() {
+    while (true) {
+        player->update();
+        enemy->update();
+        update();
+        render();
+    }
+}
+
+void Game::shootBullet(float x, float y) {
+    bullets.push_back(new Bullet(x, y)); // Neue Kugel erzeugen und hinzufügen
+}
+
+void Game::update() {
+    // Kugeln aktualisieren
+    for (Bullet* bullet : bullets) {
+        bullet->update();
+    }
+
+    // Inaktive Kugeln entfernen
+    bullets.erase(std::remove_if(bullets.begin(), bullets.end(),
+        [](Bullet* bullet) { return !bullet->isActive(); }), bullets.end());
+}
+
+void Game::render() {
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    soldierModel->draw(soldierTexture);
+
+    // Kugeln zeichnen
+    for (Bullet* bullet : bullets) {
+        bullet->draw();
+    }
+}
+
+#Game.h/
+
+#ifndef GAME_H
+#define GAME_H
+
+#include <vector>
+#include "Model.h"
+#include "Player.h"
+#include "Enemy.h"
+#include "Bullet.h"
+
+class Game {
+public:
+    Game();
+    void initialize();
+    void run();
+    void update();
+    void render();
+    ~Game();
+
+private:
+    Model* soldierModel;
+    GLuint soldierTexture;
+    Player* player;
+    Enemy* enemy;
+    std::vector<Bullet*> bullets; // Vektor für Kugeln
+
+    void shootBullet(float x, float y); // Methode zum Schießen von Kugeln hinzufügen
+};
+
+#endif // GAME_H
+
+#Model.cpp/
+
+#include "Model.h"
+#include <iostream>
+#include <fstream>
+#include <sstream>
+
+Model::Model(const std::string& path) {
+    loadModel(path);
+}
+
+void Model::loadModel(const std::string& path) {
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        std::cerr << "Failed to open model file: " << path << std::endl;
+        return;
+    }
+
+    std::string line;
+    while (getline(file, line)) {
+        std::istringstream ss(line);
+        std::string type;
+        ss >> type;
+
+        if (type == "v") { // Vertex
+            float x, y, z;
+            ss >> x >> y >> z;
+            vertices.push_back(x);
+            vertices.push_back(y);
+            vertices.push_back(z);
+        }
+    }
+    file.close();
+
+    // OpenGL-Setup
+    glGenVertexArrays(1, &VAO);
+    glGenBuffers(1, &VBO);
+
+    glBindVertexArray(VAO);
+
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), &vertices[0], GL_STATIC_DRAW);
+
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+}
+
+void Model::draw(GLuint textureID) {
+    glBindTexture(GL_TEXTURE_2D, textureID); // Textur binden
+    glBindVertexArray(VAO);
+    glDrawArrays(GL_TRIANGLES, 0, vertices.size() / 3); 
+    glBindVertexArray(0);
+}
+
+#Model.h/
+
+#ifndef MODEL_H
+#define MODEL_H
+
+#include <string>
+#include <vector>
+#include <GL/glew.h>
+
+class Model {
+public:
+    Model(const std::string& path);
+    void draw(GLuint textureID); // Textur-Parameter hinzufügen
+
+private:
+    void loadModel(const std::string& path);
+    
+    std::vector<float> vertices;
+    GLuint VAO, VBO;
+};
+
+#endif // MODEL_H
+
+
+#Player.cpp
+#include "Player.h"
+#include <iostream>
+
+Player::Player() : positionX(0.0f), positionY(0.0f) {
+    // Initialisierung des Spielers
+}
+
+void Player::move(float x, float y) {
+    positionX += x;
+    positionY += y;
+    std::cout << "Player moved to position: (" << positionX << ", " << positionY << ")\n";
+}
+
+void Player::shoot() {
+    // Schuss-Logik
+    std::cout << "Player shoots!\n";
+}
+
+void Player::update() {
+    // Logik zur Aktualisierung des Spielers, z.B. Bewegung, Animation
+}
+
+
+#Player.h/
+
+#ifndef PLAYER_H
+#define PLAYER_H
+
+class Player {
+public:
+    Player();
+    void move(float x, float y);
+    void shoot();
+    void update(); // Update-Methode hinzufügen
+
+private:
+    float positionX;
+    float positionY;
+};
+
+#endif // PLAYER_H
+
+
+#Enemy.cpp/
+
+#include "Enemy.h"
+#include <iostream>
+
+Enemy::Enemy() : positionX(0.0f), positionY(0.0f) {
+    // Initialisierung des Feindes
+}
+
+void Enemy::update() {
+    // Feind-Update-Logik
+    std::cout << "Enemy at position: (" << positionX << ", " << positionY << ") updating...\n";
+}
+
+void Enemy::attack() {
+    // Angriffslogik
+    std::cout << "Enemy attacks!\n";
+}
+
+void Enemy::setPosition(float x, float y) {
+    positionX = x;
+    positionY = y;
+    std::cout << "Enemy moved to position: (" << positionX << ", " << positionY << ")\n";
+}
+
+#Enemy.h/
+
+#ifndef ENEMY_H
+#define ENEMY_H
+
+class Enemy {
+public:
+    Enemy();
+    void update();
+    void attack();
+    void setPosition(float x, float y); // Methode zum Setzen der Position hinzufügen
+
+private:
+    float positionX;
+    float positionY;
+};
+
+#endif // ENEMY_H
+
+
+#Bullet.cpp/
+
+#include "Bullet.h"
+#include <iostream>
+
+Bullet::Bullet(float startX, float startY)
+    : positionX(startX), positionY(startY), speed(0.05f), active(true) {
+    setupBullet(); // Einrichten der Kugel-Vertex-Daten
+}
+
+void Bullet::setupBullet() {
+    // Erstellen von Vertex-Daten für die Kugel (z.B. ein kleines Quadrat)
+    float vertices[] = {
+        -0.01f, -0.01f, 0.0f, // links unten
+         0.01f, -0.01f, 0.0f, // rechts unten
+         0.01f,  0.01f, 0.0f, // rechts oben
+         0.01f,  0.01f, 0.0f, // rechts oben
+        -0.01f,  0.01f, 0.0f, // links oben
+        -0.01f, -0.01f, 0.0f  // links unten
+    };
+
+    glGenVertexArrays(1, &VAO);
+    GLuint VBO;
+    glGenBuffers(1, &VBO);
+
+    glBindVertexArray(VAO);
+
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+}
+
+void Bullet::update() {
+    if (active) {
+        positionY += speed; // Die Kugel bewegt sich nach oben (verändert die Y-Position)
+
+        if (positionY > 1.0f) { // Beispiel für die Deaktivierung der Kugel
+            active = false; // Kugel wird inaktiv, wenn sie den Bildschirm verlässt
+            std::cout << "Bullet deactivated at position: (" << positionX << ", " << positionY << ")\n";
+        }
+    }
+}
+
+void Bullet::draw() {
+    if (active) {
+        glBindVertexArray(VAO);
+        
+        // Hier eine einfache Farbe setzen
+        glColor3f(1.0f, 0.0f, 0.0f); // Rot
+        glDrawArrays(GL_TRIANGLES, 0, 6); // Zeichnen der Kugel
+        
+        glBindVertexArray(0);
+    }
+}
+
+bool Bullet::isActive() const {
+    return active; // Gibt zurück, ob die Kugel aktiv ist
+}
+
+#Bullet.h/
+
+#ifndef BULLET_H
+#define BULLET_H
+
+#include <GL/glew.h>
+
+class Bullet {
+public:
+    Bullet(float startX, float startY);
+    void update();
+    void draw(); // Methode zum Zeichnen der Kugel
+    bool isActive() const; // Überprüfen, ob die Kugel aktiv ist
+
+private:
+    float positionX;
+    float positionY;
+    float speed; // Geschwindigkeit der Kugel
+    bool active; // Status der Kugel (aktiv/inaktiv)
+    GLuint VAO; // Vertex Array Object für die Kugel
+    void setupBullet(); // Methode zur Einrichtung der Kugel-Vertex-Daten
+};
+
+#endif // BULLET_H
+
+
+#Sound.cpp/
+
+#include "Sound.h"
+#include <iostream>
+
+Sound::Sound() : sound(nullptr), channel(nullptr) {
+    FMOD::System_Create(&system);
+    system->init(512, FMOD_INIT_NORMAL, nullptr);
+}
+
+Sound::~Sound() {
+    if (sound) {
+        sound->release();
+    }
+    system->close();
+    system->release();
+}
+
+bool Sound::loadSound(const std::string& filePath) {
+    FMOD_RESULT result = system->createSound(filePath.c_str(), FMOD_DEFAULT, nullptr, &sound);
+    if (result != FMOD_OK) {
+        std::cerr << "Error loading sound: " << FMOD_ErrorString(result) << std::endl;
+        return false;
+    }
+    return true;
+}
+
+void Sound::play() {
+    if (sound) {
+        system->playSound(sound, nullptr, false, &channel);
+    }
+}
+
+void Sound::stop() {
+    if (channel) {
+        channel->stop();
+    }
+}
+
+void Sound::setVolume(float volume) {
+    if (channel) {
+        channel->setVolume(volume);
+    }
+}
+
+#Sound.h/
+
+#ifndef SOUND_H
+#define SOUND_H
+
+#include <fmod.hpp>
+#include <string>
+
+class Sound {
+public:
+    Sound();
+    ~Sound();
+
+    bool loadSound(const std::string& filePath);
+    void play();
+    void stop();
+    void setVolume(float volume);
+
+private:
+    FMOD::System* system;
+    FMOD::Sound* sound;
+    FMOD::Channel* channel;
+};
+
+#endif // SOUND_H
+
+
+#main.mm/
+
+#import <UIKit/UIKit.h>
+#import <GLKit/GLKit.h>
+#include "Game.h"
+
+@interface GameViewController : GLKViewController
+@property (strong, nonatomic) EAGLContext *context;
+@property (strong, nonatomic) Game *game;
+@end
+
+@implementation GameViewController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    
+    self.context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3];
+    [EAGLContext setCurrentContext:self.context];
+    
+    GLKView *view = (GLKView *)self.view;
+    view.context = self.context;
+    view.drawableColorFormat = GLKViewDrawableColorFormatRGBA8888;
+    view.drawableDepthFormat = GLKViewDrawableDepthFormat24;
+
+    self.game = new Game();
+    self.game->initialize();
+}
+
+- (void)update {
+    self.game->update();
+}
+
+- (void)glkView:(GLKView *)view drawInRect:(CGRect)rect {
+    self.game->render();
+}
+
+- (void)dealloc {
+    delete self.game;
+    [EAGLContext setCurrentContext:nil];
+}
+
+@end
+
+int main(int argc, char * argv[]) {
+    @autoreleasepool {
+        return UIApplicationMain(argc, argv, nil, NSStringFromClass([GameViewController class]));
+    }
+}
